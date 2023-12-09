@@ -777,7 +777,9 @@ def non_max_suppression(prediction,
                         iou_thres=0.45,
                         classes=None,
                         agnostic=False,
-                        
+                        pfinal=None,
+                        fn=9999,
+                        imgsz=640,
                         multi_label=False,
                         labels=(),
                         max_det=300):
@@ -837,15 +839,223 @@ def non_max_suppression(prediction,
         else:  # best class only
             conf, j = x[:, 5:].max(1, keepdim=True)
             x = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_thres]
+            lcx = torch.cat((box, conf, j.float()), 1)[conf.view(-1) < conf_thres] #low confidence x :lcx
 
         # Filter by class
         if classes is not None:
             x = x[(x[:, 5:6] == torch.tensor(classes, device=x.device)).any(1)]
+            lcx = lcx[(lcx[:, 5:6] == torch.tensor(classes, device=lcx.device)).any(1)]
+
+        #shortlisting the low conf. candidates
+        #lcx=lcx[lcx[:,4]>=0.85*conf_thres]
+
+        #with the code below you can add columns to a tensor in a easy way where fn is the new column value for all the rows
+        # x=x.tolist()
+        # x=[L+[-1] for L in x ]
+        # x= torch.FloatTensor(x)
+        # x=x.to(device='cuda')
+
+        # lcx=lcx.tolist()
+        # lcx=[L+[-1] for L in lcx ]
+        # lcx= torch.FloatTensor(lcx)
+        # lcx=lcx.to(device='cuda')
+
+        if pfinal is not None and (lcx.shape[0])!=0:
+            #print(pfinal)
+            
+            # piou=box_iou(lcx[:,:4],pfinal[:,:4])>iou_thres
+            # print(lcx.shape[0])
+            # print(pfinal.shape[0])
+            # print(piou.shape)
+            # print(piou)
+            
+            #output=output[0]
+            #x=x[0:6,:]
+            iouv=box_iou(pfinal[:,:4],x[:,:4])#check iou for xyxy boxes
+            #piou=box_iou(pfinal[:,:4],x[:,:4])==0 #check iou for xyxy boxes
+            #print(abcd)
+            piou=iouv==0
+            
+            #solving same object detected twice due different classes
+            piou1=[]
+            #qq=iouv>=.2
+            #piou1=iouv>=.2 and (pfinal[:,5]!=x[:,:5])
+            #iouv=iouv.tolist()
+            t1=-1
+            # if (fn%2==0):
+            #     for i in range(len(iouv)):
+            #         for j in range(len(iouv[i])):
+            #             if iouv[i][j]>=.4:
+            #                 if pfinal[i,5]!=x[j,5]:
+            #                     x[j,5]=pfinal[i,5]
+            #print(img)
+            for i in range(len(iouv)):
+                    for j in range(len(iouv[i])):
+                        if iouv[i][j]>=.4:
+                            if pfinal[i,5]!=x[j,5] and x[j,0]<.90*imgsz:
+                                x[j,5]=pfinal[i,5]
+                        
+            
+            # q1,q2=[i for i,j in enumerate(qq) if any(j) if pfinal[i,5]!=x[j,5]]
+            # x[q2,5]=pfinal[q1,5]
+            #print(t1)
+
+            #piou=piou.tolist()
+            #print(piou)
+            #check if no overlap found and save those detections from the previous frame
+            taf=[]
+            # for i in range(len(piou)):
+            #     counter=0
+            #     for j in range(len(piou[i])):
+            #         # if piou[i][j]==False and i not in taf:
+            #         #     taf.append(i)
+            #         if piou[i][j]==True:
+            #             counter=counter+1
+            #     if (counter==len(piou[i])):
+            #         taf.append(i)
+            
+            #map(lambda i: taf.extend(i),map(i,range(0,len(piou))),map(lambda i:lambda j:i+j,range(0,len(piou[i]))))
+            #taf=[i  for i in range(len(piou)) if (counter==len(piou[i]))  for j in range(len(piou[i]))  if piou[i][j]==True ]
+            
+            taf=[i for i,row in enumerate(piou) if all(row)] #calculates number of indexes that did not overlap
+            #print(taf)
+            #print(taf1)
+           # max_len = [len(occur) for word in fourier_dict for occur in fourier_dict[word]]
+            
+            # print("pfinal:")
+            # print(pfinal)
+            # for i in enumerate(taf):
+            #     pfinal1.append(pfinal)
+            #taf.append(2)
+            a=[] #list to save other tensors
+            counter=0
+            # pfinal1=torch.FloatTensor(len(taf),pfinal.shape[1])
+            # pfinal=pfinal1.to(device='cuda')
+            # if len(taf)!=0:
+            #     for i in taf:
+            #         counter=counter+1
+            #         for j in range(pfinal.shape[1]):
+            #             pfinal1[0,j]=pfinal[i,:] #fix pfinal1 it later to take multiple tensor values
+            if len(taf)!=0:
+                #print(len(taf))
+                # for i in taf:
+
+
+                #     a.append((pfinal[i:i+1,:]).tolist())
+                #     #counter=counter+1
+                #     #pfinal1[0]=pfinal[i,:]
+                #     #print(a)
+                    
+                #     # if i>0 and i<pfinal.shape[0]:
+                #     #     pfinal=pfinal[i:i+1,:]
+                        
+                #     # elif i==0:
+                #     #     pfinal=pfinal[0:1,:]
+                #     # else:
+                #     #     pfinal=pfinal[i:i+1,:]
+                # print(a)
+                a=[(pfinal[i:i+1,:]).tolist() for i in taf] #loop to get values from pfinal wrt to taf values
+
+                #print(a)
+                a=torch.FloatTensor(a)
+                
+                finalt=a.to(device='cuda')
+                #print(finalt)
+                finalt = finalt[:, -1, :]
+                #print(finalt)
+                # if len(finalt)!=0:
+                #     print(piou)
+                #     print(finalt)
+                #     print(counter)
+                
+                #print(lcx)
+                #print(finalt.shape)
+                iouv1=box_iou(lcx[:,:4],finalt[:,:4]) #check iou for xyxy boxes
+                #piou1=box_iou(lcx[:,:4],finalt[:,:4])>=0.5 #check iou for xyxy boxes
+                piou1=iouv1>=.5
+                # print("piou1:")
+                # print(piou1)
+
+            #check if no overlap found and save those rejected detections from the current
+            taf=[]
+            # for i in range(len(piou1)):
+            #     counter=0
+            #     for j in range(len(piou1[i])):
+            #          if piou1[i][j]==True and i not in taf:
+            #              taf.append(i)
+            #     #     if piou1[i][j]==True:
+            #     #         counter=counter+1
+            #     # if (counter==len(piou1[i])):
+            #     #     taf.append(i)
+            #print(taf)
+            taf=[i for i,row in enumerate(piou1) if any(row)]
+            # print(taf)
+            
+            counter=0
+            a=[] #list to save other tensors
+            finalt=0
+            if len(taf)!=0:
+                # for i in taf:
+                    
+
+                #     #print(lcx[i:i+1,:])
+                #     a.append((lcx[i:i+1,:]).tolist())
+                        
+                    
+                #     #counter=counter+1
+                a=[(lcx[i:i+1,:]).tolist() for i in taf] #loop to get values from pfinal wrt to taf values
+                # if len(a)==1:
+                #     finalt=a[0]
+                # elif len(a)==2:
+                #     finalt=torch.cat((a[0],a[1]),0)
+                # elif len(a)==3:
+                #     finalt=torch.cat((a[0],a[1],a[2]),0)
+                a=torch.FloatTensor(a)
+                finalt=a.to(device='cuda')
+
+                #print(finalt)
+                finalt = finalt[:, -1, :]
+                
+                if len(x)>len(finalt):
+                    reps = len(x) // len(finalt) + 1  #length for repeating values
+                    res = finalt.repeat(reps, *[1]*(finalt.ndim - 1))[:len(x)] #repeating values of the smaller tensor to make it as big as bigger tensor
+
+            
+                    res = torch.cat((x,res),0)
+                
+                    ind=x.shape[0]+finalt.shape[0] #indices to be sliced
+                
+                    res=res[0:ind,:] #slicing the tensor to remove the redundant values of cancatenated tensor
+                    x=res
+            
             
 
-        # Apply finite constraint
-        # if not torch.isfinite(x).all():
-        #     x = x[torch.isfinite(x).all(1)]
+                
+
+                elif len(x)<len(finalt):
+                
+                    reps = len(finalt) // len(x) + 1  #length for repeating values
+                    res = x.repeat(reps, *[1]*(x.ndim - 1))[:len(finalt)] #repeating values of the smaller tensor to make it as big as bigger tensor
+
+            
+                    res = torch.cat((finalt,res),0)
+                
+                    ind=x.shape[0]+finalt.shape[0] #indices to be sliced
+                
+                    res=res[0:ind,:] #slicing the tensor to remove the redundant values of cancatenated tensor
+                    x=res
+            
+            
+
+                
+                else: x= torch.cat((x,finalt),0)
+            
+            
+
+            
+            #output=[output]    
+
+    
 
         # Check shape
         n = x.shape[0]  # number of boxes
@@ -858,6 +1068,8 @@ def non_max_suppression(prediction,
         c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
         boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
         i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
+
+
         if i.shape[0] > max_det:  # limit detections
             i = i[:max_det]
         if merge and (1 < n < 3E3):  # Merge NMS (boxes merged using weighted mean)
@@ -869,6 +1081,27 @@ def non_max_suppression(prediction,
                 i = i[iou.sum(1) > 1]  # require redundancy
 
         output[xi] = x[i]
+        #output=output[0]
+        #piou=box_iou(output[:,:4],output[:,:4])>=.85 and 
+        print(output[0])
+        #print(tempfile)
+
+        #checking the overlapping with pfinal and lcx with use of box_iou function to check for overlapping
+        
+        #pfinal1=[[]]
+        
+
+
+
+        #only frame previous and current: dual frames or less
+        # temp=output[0]
+        # output=temp[temp[:,6]>=fn-1]
+        # print("lcx:")
+        # print(lcx)
+        # print("final output:")
+        # print(output)
+        # output=[output]
+        
         if (time.time() - t) > time_limit:
             LOGGER.warning(f'WARNING: NMS time limit {time_limit:.3f}s exceeded')
             break  # time limit exceeded

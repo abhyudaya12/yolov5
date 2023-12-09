@@ -777,7 +777,8 @@ def non_max_suppression(prediction,
                         iou_thres=0.45,
                         classes=None,
                         agnostic=False,
-                        
+                        pfinal=None,
+                        fn=9999,
                         multi_label=False,
                         labels=(),
                         max_det=300):
@@ -790,7 +791,7 @@ def non_max_suppression(prediction,
     bs = prediction.shape[0]  # batch size
     nc = prediction.shape[2] - 5  # number of classes
     xc = prediction[..., 4] > conf_thres  # candidates
-
+    #a=pfinal
     # Checks
     assert 0 <= conf_thres <= 1, f'Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0'
     assert 0 <= iou_thres <= 1, f'Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0'
@@ -806,6 +807,7 @@ def non_max_suppression(prediction,
 
     t = time.time()
     output = [torch.zeros((0, 6), device=prediction.device)] * bs
+    res=[torch.zeros((0, 6), device=prediction.device)] * bs
     for xi, x in enumerate(prediction):  # image index, image inference
         # Apply constraints
         # x[((x[..., 2:4] < min_wh) | (x[..., 2:4] > max_wh)).any(1), 4] = 0  # width-height
@@ -829,6 +831,11 @@ def non_max_suppression(prediction,
 
         # Box (center x, center y, width, height) to (x1, y1, x2, y2)
         box = xywh2xyxy(x[:, :4])
+        #box1 = (x[:, :4])
+        # x=x[0:,:6]
+        # print(x.shape)
+        # print(box)
+        # print(box1)
 
         # Detections matrix nx6 (xyxy, conf, cls)
         if multi_label:
@@ -837,11 +844,71 @@ def non_max_suppression(prediction,
         else:  # best class only
             conf, j = x[:, 5:].max(1, keepdim=True)
             x = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_thres]
+            lcx = torch.cat((box, conf, j.float()), 1)[conf.view(-1) < conf_thres] #low confidence x :lcx
+            #x = torch.cat((box, conf, j.float()), 1)
+
 
         # Filter by class
         if classes is not None:
             x = x[(x[:, 5:6] == torch.tensor(classes, device=x.device)).any(1)]
+        
+
+        #with the code below you can add columns to a tensor in a easy way
+        x=x.tolist()
+        x=[L+[fn] for L in x ]
+        x= torch.FloatTensor(x)
+        x=x.to(device='cuda')
+
+        #with the code below you can concatinate any tensor with any other tensor    
+        if pfinal is not None:
             
+            # print("1")
+            #print(x.shape)
+            #pfinal=pfinal
+            print("2")
+            print(pfinal.shape)
+            #res[:,:4]
+            
+            # repeat_vals = [x.shape[0] // pfinal.shape[0]] + [-1] * (len(pfinal.shape) - 1)
+            
+            # x = torch.cat((x, pfinal.expand(*repeat_vals)), dim=-1)
+            reps = len(x) // len(pfinal) + 1  #length for repeating values
+            res = pfinal.repeat(reps, *[1]*(pfinal.ndim - 1))[:len(x)] #repeating values of the smaller tensor to make it as big as bigger tensor
+
+            #res[:,0:4]=res[:,0:4]/2
+            
+            # print("3")
+            # print(res)
+            res = torch.cat((x,res),0)
+            
+            ind=x.shape[0]+pfinal.shape[0] #indices to be sliced
+            #ind=x.shape[0]
+            #print(res)
+            res=res[0:ind,:] #slicing the tensor to remove the redundant values of cancatenated tensor
+            #print(res.shape)
+            print("3")
+            print(res.shape)
+
+
+            x=res
+            print(x)
+            print("4")
+            print(x.shape)
+
+        # if pfinal is not None:
+            
+        #     #print("1")
+        #     #print(x.shape)
+        #     for i in range(x.shape[0]):
+        #         for j in range(pfinal.shape[0]):
+        #             if (x[:,0:1]>pfinal[:,0:1] or x[:,0:1]<pfinal[:,0:1]):
+        #                 print('true')
+
+            
+
+            
+
+
 
         # Apply finite constraint
         # if not torch.isfinite(x).all():
@@ -854,10 +921,15 @@ def non_max_suppression(prediction,
         elif n > max_nms:  # excess boxes
             x = x[x[:, 4].argsort(descending=True)[:max_nms]]  # sort by confidence
 
+        
+
         # Batched NMS
         c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
         boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
         i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
+
+
+
         if i.shape[0] > max_det:  # limit detections
             i = i[:max_det]
         if merge and (1 < n < 3E3):  # Merge NMS (boxes merged using weighted mean)
@@ -868,7 +940,15 @@ def non_max_suppression(prediction,
             if redundant:
                 i = i[iou.sum(1) > 1]  # require redundancy
 
+
+
         output[xi] = x[i]
+        #removing the values from the tensor based on frame number and only keep current and previous frame
+        temp=output[0]
+        output=temp[temp[:,6]>=fn-1]
+        output=[output]
+        print('5')
+        print(output[0].shape)
         if (time.time() - t) > time_limit:
             LOGGER.warning(f'WARNING: NMS time limit {time_limit:.3f}s exceeded')
             break  # time limit exceeded

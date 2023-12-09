@@ -32,7 +32,7 @@ import pkg_resources as pkg
 import torch
 import torchvision
 import yaml
-
+import torch.nn.functional as F
 from utils.downloads import gsutil_getsize
 from utils.metrics import box_iou, fitness
 
@@ -777,10 +777,10 @@ def non_max_suppression(prediction,
                         iou_thres=0.45,
                         classes=None,
                         agnostic=False,
-                        
+                        pfinal=None,
                         multi_label=False,
                         labels=(),
-                        max_det=300):
+                        max_det=300,xcP=None):
     """Non-Maximum Suppression (NMS) on inference results to reject overlapping bounding boxes
 
     Returns:
@@ -789,7 +789,34 @@ def non_max_suppression(prediction,
 
     bs = prediction.shape[0]  # batch size
     nc = prediction.shape[2] - 5  # number of classes
-    xc = prediction[..., 4] > conf_thres  # candidates
+    #print(bs)
+    #print(prediction.shape[2])
+    # print(nc)
+    # print(prediction.shape)
+    # print(prediction.shape[3])
+    xcC = prediction[..., 4] > conf_thres
+    #print(prediction[..., 12])
+    #xcP = prediction[..., 4] > conf_thres
+    if xcP is not None:
+        # if len(xcC)>len(xcP):
+        #     l=len(xcC)
+        #     xcP=F.pad(xcP,(l-xcP.size(1),False))
+        #     xc = xcP or xcC  # candidates
+        # elif len(xcP)>len(xcC):
+        #     l=len(xcC)
+        #     xcC=F.pad(xcC,(l-xcC.size(1),False))
+        #     xc = xcP or xcC  # candidates
+        # else:
+        #     xc = xcP or xcC  # candidates
+        
+        xc=torch.logical_or(xcC,xcP) # candidates
+        #xc=torch.cmax(xc,xcP) # candidates
+        #print(torch.equal(xcC,xc))    
+    else:
+        xc = xcC
+    # print(prediction)
+    # print( prediction[...,4])
+    # print(xc)
 
     # Checks
     assert 0 <= conf_thres <= 1, f'Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0'
@@ -810,7 +837,10 @@ def non_max_suppression(prediction,
         # Apply constraints
         # x[((x[..., 2:4] < min_wh) | (x[..., 2:4] > max_wh)).any(1), 4] = 0  # width-height
         x = x[xc[xi]]  # confidence
-
+        # print(x[...,4]>conf_thres)
+        # print(xi)
+        # print(xc)
+        # print(x)
         # Cat apriori labels if autolabelling
         if labels and len(labels[xi]):
             lb = labels[xi]
@@ -819,24 +849,32 @@ def non_max_suppression(prediction,
             v[:, 4] = 1.0  # conf
             v[range(len(lb)), lb[:, 0].long() + 5] = 1.0  # cls
             x = torch.cat((x, v), 0)
+            #print("went in")
 
         # If none remain process next image
         if not x.shape[0]:
+            
             continue
-
+        #print(x.shape)      
         # Compute conf
+        #print(x[:, 5:]) #find the emaning of these in python terms for your own understanding
+        #print(x[:, 4:5])
         x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
 
         # Box (center x, center y, width, height) to (x1, y1, x2, y2)
         box = xywh2xyxy(x[:, :4])
-
-        # Detections matrix nx6 (xyxy, conf, cls)
+        #print(box)
+        # Detections matrix nx6 (xyxy, conf, cls) #Abi changed conf thres to 0.1
         if multi_label:
-            i, j = (x[:, 5:] > conf_thres).nonzero(as_tuple=False).T
+            i, j = (x[:, 5:] > 0.1).nonzero(as_tuple=False).T
             x = torch.cat((box[i], x[i, j + 5, None], j[:, None].float()), 1)
         else:  # best class only
             conf, j = x[:, 5:].max(1, keepdim=True)
-            x = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_thres]
+            #r=range(0.8*conf_thres,)
+            x = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > .1 ]
+            #print(conf.view(-1))
+            #print(conf)
+            #print(j)
 
         # Filter by class
         if classes is not None:
@@ -853,22 +891,31 @@ def non_max_suppression(prediction,
             continue
         elif n > max_nms:  # excess boxes
             x = x[x[:, 4].argsort(descending=True)[:max_nms]]  # sort by confidence
+            #print("WORKING")
+        #print(x)
 
         # Batched NMS
         c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
-        boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
+        #boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
+        boxes, scores = x[:, :4], x[:, 4]
+        #print(scores)
         i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
+        #print(i)
         if i.shape[0] > max_det:  # limit detections
             i = i[:max_det]
+            #print("working1")
+           # print(i)
         if merge and (1 < n < 3E3):  # Merge NMS (boxes merged using weighted mean)
             # update boxes as boxes(i,4) = weights(i,n) * boxes(n,4)
             iou = box_iou(boxes[i], boxes) > iou_thres  # iou matrix
+            #print("working2")
             weights = iou * scores[None]  # box weights
             x[i, :4] = torch.mm(weights, x[:, :4]).float() / weights.sum(1, keepdim=True)  # merged boxes
             if redundant:
                 i = i[iou.sum(1) > 1]  # require redundancy
 
         output[xi] = x[i]
+        #print(output[xi])
         if (time.time() - t) > time_limit:
             LOGGER.warning(f'WARNING: NMS time limit {time_limit:.3f}s exceeded')
             break  # time limit exceeded

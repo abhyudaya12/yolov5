@@ -777,7 +777,9 @@ def non_max_suppression(prediction,
                         iou_thres=0.45,
                         classes=None,
                         agnostic=False,
-                        
+                        pfinal=None,
+                        fn=9999,
+                        imgsz=640,
                         multi_label=False,
                         labels=(),
                         max_det=300):
@@ -837,15 +839,28 @@ def non_max_suppression(prediction,
         else:  # best class only
             conf, j = x[:, 5:].max(1, keepdim=True)
             x = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_thres]
+            lcx = torch.cat((box, conf, j.float()), 1)[conf.view(-1) < conf_thres] #low confidence x :lcx
 
         # Filter by class
         if classes is not None:
             x = x[(x[:, 5:6] == torch.tensor(classes, device=x.device)).any(1)]
-            
+            lcx = lcx[(lcx[:, 5:6] == torch.tensor(classes, device=lcx.device)).any(1)]
 
-        # Apply finite constraint
-        # if not torch.isfinite(x).all():
-        #     x = x[torch.isfinite(x).all(1)]
+        #shortlisting the low conf. candidates
+        #lcx=lcx[lcx[:,4]>=0.85*conf_thres]
+
+        #with the code below you can add columns to a tensor in a easy way
+        # x=x.tolist()
+        # x=[L+[fn] for L in x ]
+        # x= torch.FloatTensor(x)
+        # x=x.to(device='cuda')
+
+        # lcx=lcx.tolist()
+        # lcx=[L+[fn] for L in lcx ]
+        # lcx= torch.FloatTensor(lcx)
+        # lcx=lcx.to(device='cuda')    
+
+    
 
         # Check shape
         n = x.shape[0]  # number of boxes
@@ -858,6 +873,8 @@ def non_max_suppression(prediction,
         c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
         boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
         i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
+
+
         if i.shape[0] > max_det:  # limit detections
             i = i[:max_det]
         if merge and (1 < n < 3E3):  # Merge NMS (boxes merged using weighted mean)
@@ -869,6 +886,174 @@ def non_max_suppression(prediction,
                 i = i[iou.sum(1) > 1]  # require redundancy
 
         output[xi] = x[i]
+        #print(tempfile)
+
+        #checking the overlapping with pfinal and lcx with use of box_iou function to check for overlapping
+        
+        #pfinal1=[[]]
+        if pfinal is not None and (lcx.shape[0])!=0:
+            #print(pfinal)
+            
+            # piou=box_iou(lcx[:,:4],pfinal[:,:4])>iou_thres
+            # print(lcx.shape[0])
+            # print(pfinal.shape[0])
+            # print(piou.shape)
+            # print(piou)
+            
+            output=output[0]
+            piou=box_iou(pfinal[:,:4],output[:,:4])==0 #check iou for xyxy boxes
+            piou1=[]
+            #piou=piou.tolist()
+            #print(piou)
+            #check if no overlap found and save those detections from the previous frame
+            taf=[]
+            for i in range(len(piou)):
+                counter=0
+                for j in range(len(piou[i])):
+                    # if piou[i][j]==False and i not in taf:
+                    #     taf.append(i)
+                    if piou[i][j]==True:
+                        counter=counter+1
+                if (counter==len(piou[i])):
+                    taf.append(i)
+            # print("pfinal:")
+            # print(pfinal)
+            # for i in enumerate(taf):
+            #     pfinal1.append(pfinal)
+            #taf.append(2)
+            a=[] #list to save other tensors
+            counter=0
+            # pfinal1=torch.FloatTensor(len(taf),pfinal.shape[1])
+            # pfinal=pfinal1.to(device='cuda')
+            # if len(taf)!=0:
+            #     for i in taf:
+            #         counter=counter+1
+            #         for j in range(pfinal.shape[1]):
+            #             pfinal1[0,j]=pfinal[i,:] #fix pfinal1 it later to take multiple tensor values  
+            if len(taf)!=0:
+                #print(len(taf))
+                for i in taf:
+
+
+                    a.append((pfinal[i:i+1,:]).tolist())
+                    counter=counter+1
+                    #pfinal1[0]=pfinal[i,:]
+                    #print(a)
+                    
+                    # if i>0 and i<pfinal.shape[0]:
+                    #     pfinal=pfinal[i:i+1,:]
+                        
+                    # elif i==0:
+                    #     pfinal=pfinal[0:1,:]
+                    # else:
+                    #     pfinal=pfinal[i:i+1,:]
+
+                
+                a=torch.FloatTensor(a)
+                #print(a)
+                finalt=a.to(device='cuda')
+                #print(finalt)
+                finalt = finalt[:, -1, :]
+                print(finalt)
+                # if len(finalt)!=0:
+                #     print(piou)
+                #     print(finalt)
+                #     print(counter)
+                
+                print(lcx)
+                print(finalt.shape)
+                piou1=box_iou(lcx[:,:4],finalt[:,:4])>=0.5 #check iou for xyxy boxes
+                # print("piou1:")
+                # print(piou1)
+
+            #check if no overlap found and save those rejected detections from the current
+            taf=[]
+            for i in range(len(piou1)):
+                counter=0
+                for j in range(len(piou1[i])):
+                     if piou1[i][j]==True and i not in taf:
+                         taf.append(i)
+                #     if piou1[i][j]==True:
+                #         counter=counter+1
+                # if (counter==len(piou1[i])):
+                #     taf.append(i)
+
+            #print(taf)
+            counter=0
+            a=[] #list to save other tensors
+            finalt=0
+            if len(taf)!=0:
+                for i in taf:
+                    
+
+                    #print(lcx[i:i+1,:])
+                    a.append((lcx[i:i+1,:]).tolist())
+                        
+                    
+                    counter=counter+1
+            
+                # if len(a)==1:
+                #     finalt=a[0]
+                # elif len(a)==2:
+                #     finalt=torch.cat((a[0],a[1]),0)
+                # elif len(a)==3:
+                #     finalt=torch.cat((a[0],a[1],a[2]),0)
+                a=torch.FloatTensor(a)
+                finalt=a.to(device='cuda')
+
+                #print(finalt)
+                finalt = finalt[:, -1, :]
+                
+                if len(output)>len(finalt):
+                    reps = len(output) // len(finalt) + 1  #length for repeating values
+                    res = finalt.repeat(reps, *[1]*(finalt.ndim - 1))[:len(output)] #repeating values of the smaller tensor to make it as big as bigger tensor
+
+            
+                    res = torch.cat((output,res),0)
+                
+                    ind=output.shape[0]+finalt.shape[0] #indices to be sliced
+                
+                    res=res[0:ind,:] #slicing the tensor to remove the redundant values of cancatenated tensor
+                    output=res
+            
+            
+
+                
+
+                elif len(output)<len(finalt):
+                
+                    reps = len(finalt) // len(output) + 1  #length for repeating values
+                    res = output.repeat(reps, *[1]*(output.ndim - 1))[:len(finalt)] #repeating values of the smaller tensor to make it as big as bigger tensor
+
+            
+                    res = torch.cat((finalt,res),0)
+                
+                    ind=output.shape[0]+finalt.shape[0] #indices to be sliced
+                
+                    res=res[0:ind,:] #slicing the tensor to remove the redundant values of cancatenated tensor
+                    output=res
+            
+            
+
+                
+                else: output= torch.cat((output,finalt),0)
+            
+            
+
+            print(output)
+            output=[output]
+
+
+
+        #only frame previous and current: dual frames or less
+        # temp=output[0]
+        # output=temp[temp[:,6]>=fn-1]
+        # print("lcx:")
+        # print(lcx)
+        # print("final output:")
+        # print(output)
+        # output=[output]
+        
         if (time.time() - t) > time_limit:
             LOGGER.warning(f'WARNING: NMS time limit {time_limit:.3f}s exceeded')
             break  # time limit exceeded

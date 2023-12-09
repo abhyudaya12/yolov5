@@ -777,7 +777,8 @@ def non_max_suppression(prediction,
                         iou_thres=0.45,
                         classes=None,
                         agnostic=False,
-                        
+                        pfinal=None,
+                        fn=9999,
                         multi_label=False,
                         labels=(),
                         max_det=300):
@@ -789,7 +790,7 @@ def non_max_suppression(prediction,
 
     bs = prediction.shape[0]  # batch size
     nc = prediction.shape[2] - 5  # number of classes
-    xc = prediction[..., 4] > conf_thres  # candidates
+    xc = prediction[..., 4] > .2  # candidates
 
     # Checks
     assert 0 <= conf_thres <= 1, f'Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0'
@@ -837,15 +838,65 @@ def non_max_suppression(prediction,
         else:  # best class only
             conf, j = x[:, 5:].max(1, keepdim=True)
             x = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_thres]
+            lcx = torch.cat((box, conf, j.float()), 1)[conf.view(-1) < conf_thres] #low confidence x :lcx
 
         # Filter by class
         if classes is not None:
             x = x[(x[:, 5:6] == torch.tensor(classes, device=x.device)).any(1)]
-            
+            lcx = lcx[(lcx[:, 5:6] == torch.tensor(classes, device=lcx.device)).any(1)]
+
+        #shortlisting the low conf. candidates
+        #lcx=lcx[lcx[:,4]>=0.85*conf_thres]
+
+        #with the code below you can add columns to a tensor in a easy way
+        x=x.tolist()
+        x=[L+[fn] for L in x ]
+        x= torch.FloatTensor(x)
+        x=x.to(device='cuda')
+
+        lcx=lcx.tolist()
+        lcx=[L+[fn] for L in lcx ]
+        lcx= torch.FloatTensor(lcx)
+        lcx=lcx.to(device='cuda')    
 
         # Apply finite constraint
         # if not torch.isfinite(x).all():
         #     x = x[torch.isfinite(x).all(1)]
+
+        # if len(lcx) >=1:
+            
+        #     #output=output[0]
+        #     if len(x)>len(lcx):
+        #         reps = len(x) // len(lcx) + 1  #length for repeating values
+        #         res = lcx.repeat(reps, *[1]*(lcx.ndim - 1))[:len(x)] #repeating values of the smaller tensor to make it as big as bigger tensor
+
+           
+        #         res = torch.cat((x,res),0)
+            
+        #         ind=x.shape[0]+lcx.shape[0] #indices to be sliced
+            
+        #         res=res[0:ind,:] #slicing the tensor to remove the redundant values of cancatenated tensor
+            
+            
+
+        #         x=res
+        #     elif len(x)<len(lcx):
+                
+        #         reps = len(lcx) // len(x) + 1  #length for repeating values
+        #         res = x.repeat(reps, *[1]*(x.ndim - 1))[:len(lcx)] #repeating values of the smaller tensor to make it as big as bigger tensor
+
+           
+        #         res = torch.cat((lcx,res),0)
+            
+        #         ind=x.shape[0]+lcx.shape[0] #indices to be sliced
+            
+        #         res=res[0:ind,:] #slicing the tensor to remove the redundant values of cancatenated tensor
+            
+            
+
+        #         x=res
+        #     else: torch.cat((x,lcx),0)
+        #     #output=[output]
 
         # Check shape
         n = x.shape[0]  # number of boxes
@@ -869,6 +920,86 @@ def non_max_suppression(prediction,
                 i = i[iou.sum(1) > 1]  # require redundancy
 
         output[xi] = x[i]
+        #with the code below you can concatinate any tensor with any other tensor    
+        if pfinal is not None:
+            
+            output=output[0]
+            if len(output)>len(pfinal):
+                reps = len(output) // len(pfinal) + 1  #length for repeating values
+                res = pfinal.repeat(reps, *[1]*(pfinal.ndim - 1))[:len(output)] #repeating values of the smaller tensor to make it as big as bigger tensor
+
+           
+                res = torch.cat((output,res),0)
+            
+                ind=output.shape[0]+pfinal.shape[0] #indices to be sliced
+            
+                res=res[0:ind,:] #slicing the tensor to remove the redundant values of cancatenated tensor
+            
+            
+
+                output=res
+            elif len(output)<len(pfinal):
+                
+                reps = len(pfinal) // len(output) + 1  #length for repeating values
+                res = output.repeat(reps, *[1]*(output.ndim - 1))[:len(pfinal)] #repeating values of the smaller tensor to make it as big as bigger tensor
+
+           
+                res = torch.cat((pfinal,res),0)
+            
+                ind=output.shape[0]+pfinal.shape[0] #indices to be sliced
+            
+                res=res[0:ind,:] #slicing the tensor to remove the redundant values of cancatenated tensor
+            
+            
+
+                output=res
+            else: torch.cat((output,pfinal),0)
+            output=[output]
+        
+        if len(lcx) >=1:
+            
+            output=output[0]
+            if len(output)>len(lcx):
+                reps = len(output) // len(lcx) + 1  #length for repeating values
+                res = lcx.repeat(reps, *[1]*(lcx.ndim - 1))[:len(output)] #repeating values of the smaller tensor to make it as big as bigger tensor
+
+           
+                res = torch.cat((output,res),0)
+            
+                ind=output.shape[0]+lcx.shape[0] #indices to be sliced
+            
+                res=res[0:ind,:] #slicing the tensor to remove the redundant values of cancatenated tensor
+            
+            
+
+                output=res
+            elif len(output)<len(lcx):
+                
+                reps = len(lcx) // len(output) + 1  #length for repeating values
+                res = output.repeat(reps, *[1]*(output.ndim - 1))[:len(lcx)] #repeating values of the smaller tensor to make it as big as bigger tensor
+
+           
+                res = torch.cat((lcx,res),0)
+            
+                ind=output.shape[0]+lcx.shape[0] #indices to be sliced
+            
+                res=res[0:ind,:] #slicing the tensor to remove the redundant values of cancatenated tensor
+            
+            
+
+                output=res
+            else: output=torch.cat((output,lcx),0)
+            output=[output]
+
+        #only frame previous and current: dual frames or less
+        temp=output[0]  
+        output=temp[temp[:,6]>=fn-1]
+        print("lcx:")
+        print(lcx)
+        print("final output:")
+        print(output)
+        output=[output]
+        
         if (time.time() - t) > time_limit:
             LOGGER.warning(f'WARNING: NMS time limit {time_limit:.3f}s exceeded')
             break  # time limit exceeded
